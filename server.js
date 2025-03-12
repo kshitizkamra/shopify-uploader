@@ -13,9 +13,9 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // Shopify API credentials
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const METAOBJECT_DEFINITION_ID = process.env.METAOBJECT_DEFINITION_ID; // Get this from Shopify Admin
+const SHOPIFY_STORE = process.env.sizyx.myshopify.com;
+const SHOPIFY_ACCESS_TOKEN = process.env.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;
+const METAOBJECT_DEFINITION_ID = process.env.rewear_images; // Get this from Shopify Admin
 
 // Route to upload images and save to metaobjects
 app.post('/upload', upload.array('photos', 3), async (req, res) => {
@@ -62,17 +62,17 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
 
             const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`, {
                 query: `
-                  mutation fileCreate($files: [FileCreateInput!]!) {
-                    fileCreate(files: $files) {
-                      files {
-                        url
-                      }
-                      userErrors {
-                        field
-                        message
-                      }
+                    mutation fileCreate($files: [FileCreateInput!]!) {
+                        fileCreate(files: $files) {
+                            files {
+                                url
+                            }
+                            userErrors {
+                                field
+                                message
+                            }
+                        }
                     }
-                  }
                 `,
                 variables: {
                     files: [{ originalSource: `data:${file.mimetype};base64,${fileBase64}` }]
@@ -84,7 +84,8 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
             console.log("✅ Upload Response:", uploadRes.data);
 
             const uploadedFile = uploadRes.data.data.fileCreate.files[0];
-            if (!uploadedFile) {
+
+            if (!uploadedFile || !uploadedFile.url) {
                 console.log("❌ Image upload failed");
                 return res.status(500).json({ success: false, message: 'Image upload failed' });
             }
