@@ -18,6 +18,9 @@ const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
 // Route to upload images and save to metafields
 app.post('/upload', upload.array('photos', 3), async (req, res) => {
+   
+    console.log("Received request body:", req.body);
+    console.log("Received files:", req.files);
     try {
         const { customer_email, caption } = req.body;
         const files = req.files;
