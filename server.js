@@ -75,5 +75,32 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
     }
 });
 
+
+app.get('/gallery', async (req, res) => {
+    try {
+        // Fetch all customers with images stored in metafields
+        const response = await axios.get(`https://${SHOPIFY_STORE}/admin/api/2023-04/customers.json`, {
+            headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
+        });
+
+        let galleryImages = [];
+        response.data.customers.forEach(customer => {
+            if (customer.metafields) {
+                let imageMetafield = customer.metafields.find(mf => mf.key === 'rewear_images');
+                if (imageMetafield) {
+                    let images = JSON.parse(imageMetafield.value);
+                    galleryImages.push(...images);
+                }
+            }
+        });
+
+        res.json({ success: true, images: galleryImages });
+    } catch (error) {
+        console.error("Error fetching gallery:", error);
+        res.status(500).json({ success: false, message: 'Error retrieving images' });
+    }
+});
+
+
 // Start the server
 app.listen(3000, () => console.log('Server running on port 3000'));
