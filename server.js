@@ -22,115 +22,115 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
         console.log("✅ Received request body:", req.body);
         console.log("✅ Received files:", req.files);
 
-        const { customer_email, caption } = req.body;
+        const { customer_email, customer_name, caption } = req.body;
         const files = req.files;
 
-        if (!customer_email || !files.length) {
-            console.log("❌ Error: Missing email or images");
-            return res.status(400).json({ success: false, message: 'Missing email or images' });
+        if (!customer_email || !customer_name || !files.length) {
+            console.log("❌ Error: Missing email, name, or images");
+            return res.status(400).json({ success: false, message: 'Missing email, name, or images' });
         }
 
-        let customerId;
-
-        // 🔹 Step 1: Check if customer exists by email
+        // 🔹 Step 1: Get customer by email
         console.log("🔍 Fetching customer data...");
-        const customerRes = await axios.get(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers.json?email=${customer_email}`, {
-            headers: { 
-                'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                'Content-Type': 'application/json'
-            }
+        let customerRes = await axios.get(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers.json?email=${customer_email}`, {
+            headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
         });
 
-        const existingCustomer = customerRes.data.customers[0];
+        let customer = customerRes.data.customers[0];
 
-        if (existingCustomer) {
-            console.log("✅ Existing customer found:", existingCustomer.id);
-            customerId = existingCustomer.id;
-        } else {
-            console.log("⚡ Customer not found, creating new customer...");
-
-            // 🔹 Step 2: Create a new customer if not found
-            const newCustomerRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers.json`, {
+        // 🔹 Step 2: Create customer if not found
+        if (!customer) {
+            console.log("⚡ Customer not found, creating a new one...");
+            let newCustomerRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers.json`, {
                 customer: {
+                    first_name: customer_name,
                     email: customer_email,
-                    accepts_marketing: true
+                    verified_email: true
                 }
             }, {
-                headers: { 
-                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                    'Content-Type': 'application/json'
-                }
+                headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
             });
 
-            customerId = newCustomerRes.data.customer.id;
-            console.log("✅ New customer created:", customerId);
+            customer = newCustomerRes.data.customer;
+            console.log("✅ New customer created:", customer.id);
+        } else {
+            console.log("✅ Existing customer found:", customer.id);
         }
 
         // 🔹 Step 3: Upload images to Shopify
         let uploadedImages = [];
+
         for (let file of files) {
             console.log(`📤 Uploading ${file.originalname}...`);
-            let fileBase64 = file.buffer.toString('base64');
 
-            const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`, {
+            const graphqlQuery = {
                 query: `
-                  mutation {
-                    stagedUploadsCreate(input: [{filename: "${file.originalname}", mimeType: "${file.mimetype}"}]) {
+                  mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+                    stagedUploadsCreate(input: $input) {
                       stagedTargets {
                         url
                         resourceUrl
                       }
                     }
                   }
-                `
-            }, { 
-                headers: { 
-                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                    'Content-Type': 'application/json'
+                `,
+                variables: {
+                    input: [{
+                        filename: file.originalname,
+                        mimeType: file.mimetype,
+                        httpMethod: "POST",
+                        resource: "FILE",
+                    }]
                 }
-            });
+            };
 
-            console.log("✅ Upload Response:", JSON.stringify(uploadRes.data, null, 2));
-            let uploadUrl = uploadRes.data.data.stagedUploadsCreate.stagedTargets[0].resourceUrl;
-            uploadedImages.push(uploadUrl);
+            try {
+                const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`, graphqlQuery, {
+                    headers: { 
+                        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                console.log("✅ Upload Response:", JSON.stringify(uploadRes.data, null, 2));
+
+                const stagedTarget = uploadRes.data.data?.stagedUploadsCreate?.stagedTargets[0];
+                if (!stagedTarget || !stagedTarget.resourceUrl) {
+                    throw new Error("Upload URL not received from Shopify");
+                }
+
+                uploadedImages.push(stagedTarget.resourceUrl);
+            } catch (uploadError) {
+                console.error("❌ Upload Error:", uploadError.response?.data || uploadError.message);
+                return res.status(500).json({ success: false, message: 'Image upload failed' });
+            }
         }
 
         // 🔹 Step 4: Save image URLs to metafields
         console.log("💾 Saving images to Shopify metafields...");
-        await axios.put(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers/${customerId}/metafields.json`, {
+        await axios.put(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers/${customer.id}/metafields.json`, {
             metafield: {
                 namespace: 'custom',
                 key: 'rewear_images',
                 value: JSON.stringify(uploadedImages),
                 type: 'json'
             }
-        }, { 
-            headers: { 
-                'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                'Content-Type': 'application/json'
-            }
-        });
+        }, { headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN } });
 
         console.log("✅ Images saved successfully!");
         res.json({ success: true, message: 'Images uploaded successfully!' });
 
     } catch (error) {
-        console.error("❌ Full Error Response:", JSON.stringify(error.response?.data, null, 2) || error.message);
+        console.error("❌ Server Error:", error.response?.data || error.message);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
 
-// 🔹 Route to fetch gallery images
+// Route to fetch gallery images
 app.get('/gallery', async (req, res) => {
     try {
-        console.log("🔍 Fetching customer images from metafields...");
-
-        // Fetch all customers
         const response = await axios.get(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers.json`, {
-            headers: { 
-                'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                'Content-Type': 'application/json'
-            }
+            headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
         });
 
         let galleryImages = [];
@@ -144,11 +144,9 @@ app.get('/gallery', async (req, res) => {
             }
         });
 
-        console.log("✅ Gallery images fetched successfully!");
         res.json({ success: true, images: galleryImages });
-
     } catch (error) {
-        console.error("❌ Error fetching gallery:", JSON.stringify(error.response?.data, null, 2) || error.message);
+        console.error("Error fetching gallery:", error);
         res.status(500).json({ success: false, message: 'Error retrieving images' });
     }
 });
