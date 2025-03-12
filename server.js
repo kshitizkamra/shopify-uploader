@@ -60,51 +60,72 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
         // 🔹 Step 3: Upload images to Shopify
         let uploadedImages = [];
 
-        for (let file of files) {
-            console.log(`📤 Uploading ${file.originalname}...`);
+for (let file of files) {
+    console.log(`📤 Uploading ${file.originalname}...`);
 
-            const graphqlQuery = {
-                query: `
-                  mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-                    stagedUploadsCreate(input: $input) {
-                      stagedTargets {
+    const graphqlQuery = {
+        query: `
+            mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+                stagedUploadsCreate(input: $input) {
+                    stagedTargets {
                         url
+                        parameters {
+                            name
+                            value
+                        }
                         resourceUrl
-                      }
                     }
-                  }
-                `,
-                variables: {
-                    input: [{
-                        filename: file.originalname,
-                        mimeType: file.mimetype,
-                        httpMethod: "POST",
-                        resource: "FILE",
-                    }]
                 }
-            };
-
-            try {
-                const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`, graphqlQuery, {
-                    headers: { 
-                        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                        'Content-Type': 'application/json'
-                    }
-                });
-
-                console.log("✅ Upload Response:", JSON.stringify(uploadRes.data, null, 2));
-
-                const stagedTarget = uploadRes.data.data?.stagedUploadsCreate?.stagedTargets[0];
-                if (!stagedTarget || !stagedTarget.resourceUrl) {
-                    throw new Error("Upload URL not received from Shopify");
-                }
-
-                uploadedImages.push(stagedTarget.resourceUrl);
-            } catch (uploadError) {
-                console.error("❌ Upload Error:", uploadError.response?.data || uploadError.message);
-                return res.status(500).json({ success: false, message: 'Image upload failed' });
             }
+        `,
+        variables: {
+            input: [{
+                filename: file.originalname,
+                mimeType: file.mimetype,
+                resource: "FILE",
+                httpMethod: "POST"
+            }]
         }
+    };
+
+    try {
+        // 🔹 Step 3.1: Request a pre-signed upload URL from Shopify
+        const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`, graphqlQuery, {
+            headers: { 
+                'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        console.log("✅ Upload Response:", JSON.stringify(uploadRes.data, null, 2));
+
+        const stagedTarget = uploadRes.data.data?.stagedUploadsCreate?.stagedTargets[0];
+
+        if (!stagedTarget || !stagedTarget.url) {
+            throw new Error("❌ Upload URL not received from Shopify");
+        }
+
+        // 🔹 Step 3.2: Upload the image file to the pre-signed URL
+        const uploadForm = new FormData();
+        stagedTarget.parameters.forEach(param => uploadForm.append(param.name, param.value));
+        uploadForm.append('file', file.buffer, file.originalname);
+
+        const fileUploadRes = await axios.post(stagedTarget.url, uploadForm, {
+            headers: { ...uploadForm.getHeaders() }
+        });
+
+        if (fileUploadRes.status !== 204) {
+            throw new Error("❌ Image upload failed at server");
+        }
+
+        uploadedImages.push(stagedTarget.resourceUrl);
+        console.log("✅ Image uploaded successfully:", stagedTarget.resourceUrl);
+
+    } catch (uploadError) {
+        console.error("❌ Upload Error:", uploadError.response?.data || uploadError.message);
+        return res.status(500).json({ success: false, message: 'Image upload failed' });
+    }
+}
 
         // 🔹 Step 4: Save image URLs to metafields
         console.log("💾 Saving images to Shopify metafields...");
