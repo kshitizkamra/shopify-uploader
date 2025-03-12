@@ -82,6 +82,7 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
             });
 
             console.log("✅ Upload Response:", uploadRes.data);
+            console.log("Full Upload Response:", JSON.stringify(uploadRes.data, null, 2));
 
             const uploadedFile = uploadRes.data.data.fileCreate.files[0];
 
