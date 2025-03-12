@@ -33,7 +33,7 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
 
         // 🔹 Step 1: Get customer by email
         console.log("🔍 Fetching customer data...");
-        const customerRes = await axios.get(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers.json?email=${customer_email}`, {
+        const customerRes = await axios.get(`https://${SHOPIFY_STORE}/admin/api/2025-01/customers.json?email=${customer_email}`, {
             headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
         });
 
@@ -41,7 +41,7 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
 
         if (!customer) {
             console.log("❌ Customer not found. Creating new customer...");
-            const newCustomerRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/customers.json`, {
+            const newCustomerRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2025-01/customers.json`, {
                 customer: { email: customer_email, accepts_marketing: true }
             }, {
                 headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
@@ -60,7 +60,7 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
 
             const fileBase64 = file.buffer.toString('base64');
 
-            const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/graphql.json`, {
+            const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2025-01/graphql.json`, {
                 query: `
                     mutation fileCreate($files: [FileCreateInput!]!) {
                         fileCreate(files: $files) {
@@ -96,7 +96,7 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
         // 🔹 Step 3: Save images to Metaobject
         console.log("💾 Saving images to Metaobject...");
 
-        const metaobjectRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2024-01/metaobjects.json`, {
+        const metaobjectRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2025-01/metaobjects.json`, {
             metaobject: {
                 definition_id: METAOBJECT_DEFINITION_ID,
                 fields: [
