@@ -13,9 +13,9 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // Shopify API credentials
-const SHOPIFY_STORE = process.env.sizyx.myshopify.com;
-const SHOPIFY_ACCESS_TOKEN = process.env.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;
-const METAOBJECT_DEFINITION_ID = process.env.rewear_images; // Get this from Shopify Admin
+const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
+const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+const METAOBJECT_DEFINITION_ID = process.env.METAOBJECT_DEFINITION_ID; // Get this from Shopify Admin
 
 // Route to upload images and save to metaobjects
 app.post('/upload', upload.array('photos', 3), async (req, res) => {
