@@ -15,9 +15,8 @@ const upload = multer({ storage });
 // Shopify API credentials
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const METAOBJECT_DEFINITION_ID = process.env.METAOBJECT_DEFINITION_ID; // Get this from Shopify Admin
 
-// Route to upload images and save to metaobjects
+// Route to upload images and save to customer metafields
 app.post('/upload', upload.array('photos', 3), async (req, res) => {
     try {
         console.log("✅ Received request body:", req.body);
@@ -53,7 +52,7 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
             console.log("✅ Existing customer found:", customer.id);
         }
 
-        // 🔹 Step 2: Upload images to Shopify Files (Simplified Query)
+        // 🔹 Step 2: Upload images to Shopify Files
         let uploadedImages = [];
         for (let file of files) {
             console.log(`📤 Uploading ${file.originalname}...`);
@@ -64,6 +63,9 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
                 query: `
                     mutation fileCreate($files: [FileCreateInput!]!) {
                         fileCreate(files: $files) {
+                            files {
+                                url
+                            }
                             userErrors {
                                 field
                                 message
@@ -78,42 +80,43 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
                 headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
             });
 
-            console.log("GraphQL Response:", JSON.stringify(uploadRes.data, null, 2));
+            console.log("✅ Upload Response:", uploadRes.data);
 
-            if (uploadRes.data && uploadRes.data.data && uploadRes.data.data.fileCreate) {
-                // Check for userErrors
-                if (uploadRes.data.data.fileCreate.userErrors.length > 0) {
-                    console.log("GraphQL User Errors:", uploadRes.data.data.fileCreate.userErrors);
-                    return res.status(500).json({ success: false, message: 'GraphQL upload error' });
-                }
-            } else {
-                console.log("GraphQL fileCreate is undefined");
-                return res.status(500).json({ success: false, message: 'GraphQL upload error' });
+            const uploadedFile = uploadRes.data.data.fileCreate.files[0];
+
+            if (!uploadedFile || !uploadedFile.url) {
+                console.log("❌ Image upload failed");
+                return res.status(500).json({ success: false, message: 'Image upload failed' });
             }
 
-            // If no errors, continue with the rest of the code.
-            //For this simplified query, the url is not being retrieved, so we will use an empty url.
-            uploadedImages.push("");
+            uploadedImages.push(uploadedFile.url);
         }
 
-        // 🔹 Step 3: Save images to Metaobject
-        console.log("💾 Saving images to Metaobject...");
+        // 🔹 Step 3: Save images and caption to Customer Metafields
+        console.log("💾 Saving images and caption to Customer Metafields...");
 
-        const metaobjectRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/metaobjects.json`, {
-            metaobject: {
-                definition_id: METAOBJECT_DEFINITION_ID,
-                fields: [
-                    { key: "images", value: JSON.stringify(uploadedImages), type: "json" },
-                    { key: "caption", value: caption, type: "single_line_text_field" }
-                ]
-            }
+        const metafieldsRes = await axios.put(`https://${SHOPIFY_STORE}/admin/api/2023-10/customers/${customer.id}/metafields.json`, {
+            metafields: [
+                {
+                    namespace: "custom",
+                    key: "rewear_images",
+                    value: JSON.stringify(uploadedImages),
+                    type: "json_string"
+                },
+                {
+                    namespace: "custom",
+                    key: "rewear_caption",
+                    value: caption,
+                    type: "single_line_text_field"
+                }
+            ]
         }, {
             headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
         });
 
-        console.log("✅ Metaobject saved:", metaobjectRes.data);
+        console.log("✅ Customer Metafields saved:", metafieldsRes.data);
 
-        res.json({ success: true, message: 'Images uploaded successfully! (URL retrieval skipped)', images: uploadedImages });
+        res.json({ success: true, message: 'Images and caption saved to Customer Metafields!', images: uploadedImages });
 
     } catch (error) {
         console.error("❌ Server Error:", error.response?.data || error.message);
