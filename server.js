@@ -18,31 +18,37 @@ const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
 // Route to upload images and save to metafields
 app.post('/upload', upload.array('photos', 3), async (req, res) => {
-   
-    console.log("Received request body:", req.body);
-    console.log("Received files:", req.files);
     try {
+        console.log("✅ Received request body:", req.body);
+        console.log("✅ Received files:", req.files);
+
         const { customer_email, caption } = req.body;
         const files = req.files;
 
         if (!customer_email || !files.length) {
+            console.log("❌ Error: Missing email or images");
             return res.status(400).json({ success: false, message: 'Missing email or images' });
         }
 
-        // Get customer by email
+        // 🔹 Step 1: Get customer by email
+        console.log("🔍 Fetching customer data...");
         const customerRes = await axios.get(`https://${SHOPIFY_STORE}/admin/api/2023-04/customers.json?email=${customer_email}`, {
             headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
         });
 
         const customer = customerRes.data.customers[0];
         if (!customer) {
+            console.log("❌ Error: Customer not found");
             return res.status(404).json({ success: false, message: 'Customer not found' });
         }
+        console.log("✅ Customer found:", customer.id);
 
-        // Upload images to Shopify Files API
+        // 🔹 Step 2: Upload images to Shopify
         let uploadedImages = [];
         for (let file of files) {
+            console.log(`📤 Uploading ${file.originalname}...`);
             let fileBase64 = file.buffer.toString('base64');
+
             const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-04/graphql.json`, {
                 query: `
                   mutation {
@@ -56,11 +62,13 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
                 `
             }, { headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN } });
 
+            console.log("✅ Upload Response:", uploadRes.data);
             let uploadUrl = uploadRes.data.data.stagedUploadsCreate.stagedTargets[0].resourceUrl;
             uploadedImages.push(uploadUrl);
         }
 
-        // Save uploaded image URLs to metafields
+        // 🔹 Step 3: Save image URLs to metafields
+        console.log("💾 Saving images to Shopify metafields...");
         await axios.put(`https://${SHOPIFY_STORE}/admin/api/2023-04/customers/${customer.id}/metafields.json`, {
             metafield: {
                 namespace: 'custom',
@@ -70,10 +78,11 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
             }
         }, { headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN } });
 
+        console.log("✅ Images saved successfully!");
         res.json({ success: true, message: 'Images uploaded successfully!' });
 
     } catch (error) {
-        console.error(error);
+        console.error("❌ Server Error:", error.response?.data || error.message);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
