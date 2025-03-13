@@ -1,20 +1,18 @@
-# Use an official Node.js runtime as a parent image
+# Use Node.js LTS as base image
 FROM node:18
 
 # Set the working directory
 WORKDIR /usr/src/app
 
-# Copy package.json and package-lock.json
-COPY package*.json ./
-
-# Install dependencies
+# Copy package.json and install dependencies
+COPY package.json package-lock.json ./
 RUN npm install
 
 # Copy the rest of the application
 COPY . .
 
-# Expose the port your app runs on
-EXPOSE 3000
+# Expose the port Cloud Run will use
+EXPOSE 8080
 
-# Start the app
-CMD ["node", "server.js"]
+# Start the server
+CMD ["npm", "start"]
