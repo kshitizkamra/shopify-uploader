@@ -1,150 +1,75 @@
-require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
-const axios = require('axios');
 const cors = require('cors');
-const FormData = require('form-data');
-const { Blob } = require('fetch-blob'); // ✅ FIX: Properly handle file buffers
+const path = require('path');
+const { Storage } = require('@google-cloud/storage');
 
 const app = express();
-app.use(express.json());
+const PORT = process.env.PORT || 3000;
+
+// Enable CORS for frontend access
 app.use(cors());
+app.use(express.json());
+
+// Google Cloud Storage setup
+const storage = new Storage();
+const bucketName = 'YOUR_GCS_BUCKET_NAME';
 
 // Multer setup for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+});
 
-// Shopify API credentials
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const METAOBJECT_DEFINITION_ID = process.env.METAOBJECT_DEFINITION_ID;
+// ✅ Health check route (to avoid Cloud Run errors)
+app.get('/', (req, res) => {
+    res.send('🚀 Sizyx Server is running!');
+});
 
-// Route to upload images and save to metaobjects
-app.post('/upload', upload.array('photos', 3), async (req, res) => {
+// ✅ File upload endpoint
+app.post('/upload', upload.single('photos'), async (req, res) => {
     try {
-        console.log("✅ Received request body:", req.body);
-        console.log("✅ Received files:", req.files);
-
-        const { customer_email, caption } = req.body;
-        const files = req.files;
-
-        if (!customer_email || !files.length) {
-            console.log("❌ Error: Missing email or images");
-            return res.status(400).json({ success: false, message: 'Missing email or images' });
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'No file uploaded.' });
         }
 
-        // 🔹 Step 1: Get customer by email
-        console.log("🔍 Fetching customer data...");
-        const customerRes = await axios.get(`https://${SHOPIFY_STORE}/admin/api/2023-10/customers.json?email=${customer_email}`, {
-            headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
+        const fileName = `${Date.now()}_${req.file.originalname}`;
+        const blob = storage.bucket(bucketName).file(fileName);
+        const blobStream = blob.createWriteStream({
+            metadata: { contentType: req.file.mimetype },
         });
 
-        let customer = customerRes.data.customers[0];
-
-        if (!customer) {
-            console.log("❌ Customer not found. Creating new customer...");
-            const newCustomerRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/customers.json`, {
-                customer: { email: customer_email, accepts_marketing: true }
-            }, {
-                headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
-            });
-
-            customer = newCustomerRes.data.customer;
-            console.log("✅ New customer created:", customer.id);
-        } else {
-            console.log("✅ Existing customer found:", customer.id);
-        }
-
-        // 🔹 Step 2: Upload images to Shopify Files
-        let uploadedImages = [];
-
-        for (let file of files) {
-            console.log(`📤 Uploading ${file.originalname}...`);
-
-            // Step 2.1: Get Staged Upload URL
-            const stagedUploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/graphql.json`, {
-                query: `
-                    mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-                        stagedUploadsCreate(input: $input) {
-                            stagedTargets {
-                                url
-                                resourceUrl
-                                parameters {
-                                    name
-                                    value
-                                }
-                            }
-                        }
-                    }
-                `,
-                variables: {
-                    input: [
-                        {
-                            filename: file.originalname,
-                            mimeType: file.mimetype,
-                            resource: "FILE",
-                            fileSize: file.size.toString(), // 🔥 FIX: Convert fileSize to string
-                            httpMethod: "POST"
-                        }
-                    ]
-                }
-            }, {
-                headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
-            });
-
-            console.log("📌 Staged Upload Response:", JSON.stringify(stagedUploadRes.data, null, 2));
-
-            if (!stagedUploadRes.data.data || !stagedUploadRes.data.data.stagedUploadsCreate) {
-                console.log("❌ Error: Staged Upload failed");
-                return res.status(500).json({ success: false, message: 'Staged upload error' });
-            }
-
-            const stagedTarget = stagedUploadRes.data.data.stagedUploadsCreate.stagedTargets[0];
-            const uploadUrl = stagedTarget.url;
-            const resourceUrl = stagedTarget.resourceUrl;
-            const uploadParams = Object.fromEntries(stagedTarget.parameters.map(p => [p.name, p.value]));
-
-            // Step 2.2: Upload file to Shopify's staged URL
-            const uploadFormData = new FormData();
-            Object.entries(uploadParams).forEach(([key, value]) => {
-                uploadFormData.append(key, value);
-            });
-
-            // ✅ FIX: Convert file buffer to Blob using fetch-blob
-            const blob = new Blob([file.buffer], { type: file.mimetype });
-            uploadFormData.append('file', blob, file.originalname);
-
-            await axios.post(uploadUrl, uploadFormData, {
-                headers: { ...uploadFormData.getHeaders() }
-            });
-
-            uploadedImages.push(resourceUrl);
-        }
-
-        // 🔹 Step 3: Save images to Metaobject
-        console.log("💾 Saving images to Metaobject...");
-
-        const metaobjectRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/metaobjects.json`, {
-            metaobject: {
-                definition_id: METAOBJECT_DEFINITION_ID,
-                fields: [
-                    { key: "images", value: JSON.stringify(uploadedImages), type: "json" },
-                    { key: "caption", value: caption, type: "single_line_text_field" }
-                ]
-            }
-        }, {
-            headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
+        blobStream.on('error', (err) => {
+            console.error('Upload Error:', err);
+            res.status(500).json({ success: false, message: 'Upload failed' });
         });
 
-        console.log("✅ Metaobject saved:", metaobjectRes.data);
+        blobStream.on('finish', async () => {
+            const publicUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
+            console.log('File uploaded:', publicUrl);
+            res.status(200).json({ success: true, message: 'File uploaded successfully', url: publicUrl });
+        });
 
-        res.json({ success: true, message: 'Images uploaded successfully!', images: uploadedImages });
-
+        blobStream.end(req.file.buffer);
     } catch (error) {
-        console.error("❌ Server Error:", error.response?.data || error.message);
+        console.error('Upload Exception:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
 
+// ✅ Fetch uploaded images (Gallery)
+app.get('/gallery', async (req, res) => {
+    try {
+        const [files] = await storage.bucket(bucketName).getFiles();
+        const urls = files.map(file => `https://storage.googleapis.com/${bucketName}/${file.name}`);
+        res.json({ success: true, images: urls });
+    } catch (error) {
+        console.error('Gallery Fetch Error:', error);
+        res.status(500).json({ success: false, message: 'Failed to load gallery' });
+    }
+});
+
 // Start the server
-app.listen(3000, () => console.log('🚀 Server running on port 3000'));
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+});
