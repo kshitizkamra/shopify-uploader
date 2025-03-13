@@ -3,6 +3,8 @@ const express = require('express');
 const multer = require('multer');
 const axios = require('axios');
 const cors = require('cors');
+const FormData = require('form-data');
+const { Blob } = require('fetch-blob'); // ✅ FIX: Properly handle file buffers
 
 const app = express();
 app.use(express.json());
@@ -15,7 +17,7 @@ const upload = multer({ storage });
 // Shopify API credentials
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const METAOBJECT_DEFINITION_ID = process.env.METAOBJECT_DEFINITION_ID; // Get this from Shopify Admin
+const METAOBJECT_DEFINITION_ID = process.env.METAOBJECT_DEFINITION_ID;
 
 // Route to upload images and save to metaobjects
 app.post('/upload', upload.array('photos', 3), async (req, res) => {
@@ -81,7 +83,7 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
                             filename: file.originalname,
                             mimeType: file.mimetype,
                             resource: "FILE",
-                            fileSize: file.size.toString(),  // 🔥 FIX: Convert fileSize to string
+                            fileSize: file.size.toString(), // 🔥 FIX: Convert fileSize to string
                             httpMethod: "POST"
                         }
                     ]
@@ -107,7 +109,10 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
             Object.entries(uploadParams).forEach(([key, value]) => {
                 uploadFormData.append(key, value);
             });
-            uploadFormData.append('file', file.buffer, { filename: file.originalname, contentType: file.mimetype });
+
+            // ✅ FIX: Convert file buffer to Blob using fetch-blob
+            const blob = new Blob([file.buffer], { type: file.mimetype });
+            uploadFormData.append('file', blob, file.originalname);
 
             await axios.post(uploadUrl, uploadFormData, {
                 headers: { ...uploadFormData.getHeaders() }
