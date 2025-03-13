@@ -3,6 +3,7 @@ const express = require('express');
 const multer = require('multer');
 const axios = require('axios');
 const cors = require('cors');
+const FormData = require('form-data');
 
 const app = express();
 app.use(express.json());
@@ -15,7 +16,7 @@ const upload = multer({ storage });
 // Shopify API credentials
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const METAOBJECT_DEFINITION_ID = process.env.METAOBJECT_DEFINITION_ID;
+const METAOBJECT_DEFINITION_ID = process.env.METAOBJECT_DEFINITION_ID; // Get this from Shopify Admin
 
 // Route to upload images and save to metaobjects
 app.post('/upload', upload.array('photos', 3), async (req, res) => {
@@ -53,14 +54,70 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
             console.log("✅ Existing customer found:", customer.id);
         }
 
-        // 🔹 Step 2: Upload images to Shopify Files
+        // 🔹 Step 2: Upload images to Shopify Files using Staged Uploads
         let uploadedImages = [];
+
         for (let file of files) {
             console.log(`📤 Uploading ${file.originalname}...`);
 
-            const fileBase64 = file.buffer.toString('base64');
+            // Step 2.1: Get a staged upload URL from Shopify
+            const stagedUploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/graphql.json`, {
+                query: `
+                    mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+                        stagedUploadsCreate(input: $input) {
+                            stagedTargets {
+                                url
+                                resourceUrl
+                                parameters {
+                                    name
+                                    value
+                                }
+                            }
+                        }
+                    }
+                `,
+                variables: {
+                    input: [
+                        {
+                            filename: file.originalname,
+                            mimeType: file.mimetype,
+                            resource: "FILE",
+                            fileSize: file.size,
+                            httpMethod: "POST"
+                        }
+                    ]
+                }
+            }, {
+                headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
+            });
 
-            const uploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/graphql.json`, {
+            console.log("📌 Staged Upload Response:", JSON.stringify(stagedUploadRes.data, null, 2));
+
+            const stagedTarget = stagedUploadRes.data.data.stagedUploadsCreate.stagedTargets[0];
+
+            if (!stagedTarget || !stagedTarget.url) {
+                console.log("❌ Staged upload URL not received");
+                return res.status(500).json({ success: false, message: 'Staged upload failed' });
+            }
+
+            // Step 2.2: Upload the file to Shopify’s storage (S3)
+            let formData = new FormData();
+            stagedTarget.parameters.forEach(param => {
+                formData.append(param.name, param.value);
+            });
+            formData.append("file", file.buffer, file.originalname);
+
+            const s3UploadRes = await axios.post(stagedTarget.url, formData, {
+                headers: formData.getHeaders()
+            });
+
+            if (s3UploadRes.status !== 204) {
+                console.log("❌ S3 Upload failed", s3UploadRes.data);
+                return res.status(500).json({ success: false, message: 'S3 upload failed' });
+            }
+
+            // Step 2.3: Create a file in Shopify using `fileCreate`
+            const fileCreateRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/graphql.json`, {
                 query: `
                     mutation fileCreate($files: [FileCreateInput!]!) {
                         fileCreate(files: $files) {
@@ -75,38 +132,29 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
                     }
                 `,
                 variables: {
-                    files: [{ originalSource: `data:${file.mimetype};base64,${fileBase64}` }]
+                    files: [{ originalSource: stagedTarget.resourceUrl }]
                 }
             }, {
                 headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
             });
 
-            console.log("GraphQL Response:", JSON.stringify(uploadRes.data, null, 2));
+            console.log("✅ File Create Response:", JSON.stringify(fileCreateRes.data, null, 2));
 
-            if (uploadRes.data && uploadRes.data.data && uploadRes.data.data.fileCreate) {
-                // Check for userErrors
-                if (uploadRes.data.data.fileCreate.userErrors.length > 0) {
-                    console.log("❌ GraphQL User Errors:", uploadRes.data.data.fileCreate.userErrors);
-                    return res.status(500).json({ success: false, message: 'GraphQL upload error' });
-                }
-                
-                // Extract the uploaded file URL
-                const uploadedFileUrl = uploadRes.data.data.fileCreate.files[0]?.url || "";
-                uploadedImages.push(uploadedFileUrl);
-            } else {
-                console.log("❌ GraphQL fileCreate is undefined");
-                return res.status(500).json({ success: false, message: 'GraphQL upload error' });
+            if (fileCreateRes.data.data.fileCreate.userErrors.length > 0) {
+                console.log("❌ File Create Error:", fileCreateRes.data.data.fileCreate.userErrors);
+                return res.status(500).json({ success: false, message: 'File creation error' });
             }
+
+            const uploadedFileUrl = fileCreateRes.data.data.fileCreate.files[0]?.url;
+            uploadedImages.push(uploadedFileUrl);
         }
 
-        // 🔹 Step 3: Save images to Metaobject linked to customer
+        // 🔹 Step 3: Save images to Metaobject
         console.log("💾 Saving images to Metaobject...");
 
         const metaobjectRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/metaobjects.json`, {
             metaobject: {
                 definition_id: METAOBJECT_DEFINITION_ID,
-                owner_id: customer.id,  // Attach to customer
-                owner_type: "CUSTOMER",
                 fields: [
                     { key: "images", value: JSON.stringify(uploadedImages), type: "json" },
                     { key: "caption", value: caption, type: "single_line_text_field" }
