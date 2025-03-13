@@ -26,6 +26,10 @@ app.get('/', (req, res) => {
     res.send('🚀 Sizyx Server is running on Cloud Run!');
 });
 
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server is running on port ${PORT}`);
+});
+
 // ✅ File upload endpoint
 app.post('/upload', upload.single('photos'), async (req, res) => {
     try {
