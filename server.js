@@ -31,7 +31,7 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 
 // ✅ File upload endpoint
-app.post('/upload', upload.single('photos'), async (req, res) => {
+app.post('/upload', upload.array('photos', 3), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: 'No file uploaded.' });
