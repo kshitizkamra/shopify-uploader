@@ -3,7 +3,6 @@ const express = require('express');
 const multer = require('multer');
 const axios = require('axios');
 const cors = require('cors');
-const FormData = require('form-data');
 
 const app = express();
 app.use(express.json());
@@ -54,13 +53,13 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
             console.log("✅ Existing customer found:", customer.id);
         }
 
-        // 🔹 Step 2: Upload images to Shopify Files using Staged Uploads
+        // 🔹 Step 2: Upload images to Shopify Files
         let uploadedImages = [];
 
         for (let file of files) {
             console.log(`📤 Uploading ${file.originalname}...`);
 
-            // Step 2.1: Get a staged upload URL from Shopify
+            // Step 2.1: Get Staged Upload URL
             const stagedUploadRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/graphql.json`, {
                 query: `
                     mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
@@ -82,7 +81,7 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
                             filename: file.originalname,
                             mimeType: file.mimetype,
                             resource: "FILE",
-                            fileSize: file.size,
+                            fileSize: file.size.toString(),  // 🔥 FIX: Convert fileSize to string
                             httpMethod: "POST"
                         }
                     ]
@@ -93,60 +92,28 @@ app.post('/upload', upload.array('photos', 3), async (req, res) => {
 
             console.log("📌 Staged Upload Response:", JSON.stringify(stagedUploadRes.data, null, 2));
 
+            if (!stagedUploadRes.data.data || !stagedUploadRes.data.data.stagedUploadsCreate) {
+                console.log("❌ Error: Staged Upload failed");
+                return res.status(500).json({ success: false, message: 'Staged upload error' });
+            }
+
             const stagedTarget = stagedUploadRes.data.data.stagedUploadsCreate.stagedTargets[0];
+            const uploadUrl = stagedTarget.url;
+            const resourceUrl = stagedTarget.resourceUrl;
+            const uploadParams = Object.fromEntries(stagedTarget.parameters.map(p => [p.name, p.value]));
 
-            if (!stagedTarget || !stagedTarget.url) {
-                console.log("❌ Staged upload URL not received");
-                return res.status(500).json({ success: false, message: 'Staged upload failed' });
-            }
-
-            // Step 2.2: Upload the file to Shopify’s storage (S3)
-            let formData = new FormData();
-            stagedTarget.parameters.forEach(param => {
-                formData.append(param.name, param.value);
+            // Step 2.2: Upload file to Shopify's staged URL
+            const uploadFormData = new FormData();
+            Object.entries(uploadParams).forEach(([key, value]) => {
+                uploadFormData.append(key, value);
             });
-            formData.append("file", file.buffer, file.originalname);
+            uploadFormData.append('file', file.buffer, { filename: file.originalname, contentType: file.mimetype });
 
-            const s3UploadRes = await axios.post(stagedTarget.url, formData, {
-                headers: formData.getHeaders()
+            await axios.post(uploadUrl, uploadFormData, {
+                headers: { ...uploadFormData.getHeaders() }
             });
 
-            if (s3UploadRes.status !== 204) {
-                console.log("❌ S3 Upload failed", s3UploadRes.data);
-                return res.status(500).json({ success: false, message: 'S3 upload failed' });
-            }
-
-            // Step 2.3: Create a file in Shopify using `fileCreate`
-            const fileCreateRes = await axios.post(`https://${SHOPIFY_STORE}/admin/api/2023-10/graphql.json`, {
-                query: `
-                    mutation fileCreate($files: [FileCreateInput!]!) {
-                        fileCreate(files: $files) {
-                            files {
-                                url
-                            }
-                            userErrors {
-                                field
-                                message
-                            }
-                        }
-                    }
-                `,
-                variables: {
-                    files: [{ originalSource: stagedTarget.resourceUrl }]
-                }
-            }, {
-                headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
-            });
-
-            console.log("✅ File Create Response:", JSON.stringify(fileCreateRes.data, null, 2));
-
-            if (fileCreateRes.data.data.fileCreate.userErrors.length > 0) {
-                console.log("❌ File Create Error:", fileCreateRes.data.data.fileCreate.userErrors);
-                return res.status(500).json({ success: false, message: 'File creation error' });
-            }
-
-            const uploadedFileUrl = fileCreateRes.data.data.fileCreate.files[0]?.url;
-            uploadedImages.push(uploadedFileUrl);
+            uploadedImages.push(resourceUrl);
         }
 
         // 🔹 Step 3: Save images to Metaobject
