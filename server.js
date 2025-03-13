@@ -5,7 +5,7 @@ const path = require('path');
 const { Storage } = require('@google-cloud/storage');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080; // ✅ Use 8080 for Cloud Run compatibility
 
 // Enable CORS for frontend access
 app.use(cors());
@@ -21,9 +21,9 @@ const upload = multer({
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
 });
 
-// ✅ Health check route (to avoid Cloud Run errors)
+// ✅ Health check route
 app.get('/', (req, res) => {
-    res.send('🚀 Sizyx Server is running!');
+    res.send('🚀 Sizyx Server is running on Cloud Run!');
 });
 
 // ✅ File upload endpoint
@@ -69,7 +69,7 @@ app.get('/gallery', async (req, res) => {
     }
 });
 
-// Start the server
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+// ✅ Start the server and listen on all network interfaces (important for Cloud Run)
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server is running on port ${PORT}`);
 });
